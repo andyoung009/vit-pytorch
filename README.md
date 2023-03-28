@@ -27,6 +27,7 @@
 - [Masked Autoencoder](#masked-autoencoder)
 - [Simple Masked Image Modeling](#simple-masked-image-modeling)
 - [Masked Patch Prediction](#masked-patch-prediction)
+- [Masked Position Prediction](#masked-position-prediction)
 - [Adaptive Token Sampling](#adaptive-token-sampling)
 - [Patch Merger](#patch-merger)
 - [Vision Transformer for Small Datasets](#vision-transformer-for-small-datasets)
@@ -303,7 +304,7 @@ cct = CCT(
     pooling_padding = 1,
     num_layers = 14,
     num_heads = 6,
-    mlp_radio = 3.,
+    mlp_ratio = 3.,
     num_classes = 1000,
     positional_embedding = 'learnable', # ['sine', 'learnable', 'none']
 )
@@ -844,6 +845,44 @@ for _ in range(100):
 torch.save(model.state_dict(), './pretrained-net.pt')
 ```
 
+## Masked Position Prediction
+
+<img src="./images/mp3.png" width="400px"></img>
+
+New <a href="https://arxiv.org/abs/2207.07611">paper</a> that introduces masked position prediction pre-training criteria. This strategy is more efficient than the Masked Autoencoder strategy and has comparable performance.  
+
+```python
+import torch
+from vit_pytorch.mp3 import ViT, MP3
+
+v = ViT(
+    num_classes = 1000,
+    image_size = 256,
+    patch_size = 8,
+    dim = 1024,
+    depth = 6,
+    heads = 8,
+    mlp_dim = 2048,
+    dropout = 0.1,
+)
+
+mp3 = MP3(
+    vit = v,
+    masking_ratio = 0.75
+)
+
+images = torch.randn(8, 3, 256, 256)
+
+loss = mp3(images)
+loss.backward()
+
+# that's all!
+# do the above in a for loop many times with a lot of images and your vision transformer will learn
+
+# save your improved vision transformer
+torch.save(v.state_dict(), './trained-vit.pt')
+```
+
 ## Adaptive Token Sampling
 
 <img src="./images/ats.png" width="400px"></img>
@@ -1043,7 +1082,7 @@ cct = CCT(
     pooling_padding = 1,
     num_layers = 14,
     num_heads = 6,
-    mlp_radio = 3.,
+    mlp_ratio = 3.,
     num_classes = 1000,
     positional_embedding = 'learnable'
 )
@@ -1903,6 +1942,15 @@ Coming from computer vision and new to transformers? Here are some resources tha
     eprint  = {1706.03762},
     archivePrefix = {arXiv},
     primaryClass = {cs.CL}
+}
+```
+
+```bibtex
+@inproceedings{dao2022flashattention,
+    title   = {Flash{A}ttention: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
+    author  = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+    booktitle = {Advances in Neural Information Processing Systems},
+    year    = {2022}
 }
 ```
 
