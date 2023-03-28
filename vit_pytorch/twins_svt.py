@@ -8,16 +8,24 @@ from einops.layers.torch import Rearrange
 # helper methods
 
 def group_dict_by_key(cond, d):
+    # 定义一个返回值列表，包含两个空字典
     return_val = [dict(), dict()]
+    # 遍历输入字典的所有键
     for key in d.keys():
+        # 判断该键是否符合条件
         match = bool(cond(key))
+        # 根据条件匹配结果，将键值对存入对应的空字典中
         ind = int(not match)
         return_val[ind][key] = d[key]
+    # 返回两个字典作为元组
     return (*return_val,)
 
 def group_by_key_prefix_and_remove_prefix(prefix, d):
+    # 将输入字典中所有以指定前缀开头的键值对存入第一个返回字典中，其余存入第二个返回字典中
     kwargs_with_prefix, kwargs = group_dict_by_key(lambda x: x.startswith(prefix), d)
+    # 将第一个返回字典中的键去掉指定前缀，存入第三个返回字典中
     kwargs_without_prefix = dict(map(lambda x: (x[0][len(prefix):], x[1]), tuple(kwargs_with_prefix.items())))
+    # 返回两个字典作为元组
     return kwargs_without_prefix, kwargs
 
 # classes
@@ -38,6 +46,7 @@ class LayerNorm(nn.Module):
         self.b = nn.Parameter(torch.zeros(1, dim, 1, 1))
 
     def forward(self, x):
+        # 计算方差和均值，用来归一化
         var = torch.var(x, dim = 1, unbiased = False, keepdim = True)
         mean = torch.mean(x, dim = 1, keepdim = True)
         return (x - mean) / (var + self.eps).sqrt() * self.g + self.b
@@ -206,12 +215,14 @@ class TwinsSVT(nn.Module):
         dropout = 0.
     ):
         super().__init__()
+        # locals() 函数会以字典类型返回当前位置的全部局部变量。
         kwargs = dict(locals())
 
         dim = 3
         layers = []
 
         for prefix in ('s1', 's2', 's3', 's4'):
+            # 通过前缀从全部局部变量中筛选相关的项并提取关键的信息（如dim_next等）
             config, kwargs = group_by_key_prefix_and_remove_prefix(f'{prefix}_', kwargs)
             is_last = prefix == 's4'
 
