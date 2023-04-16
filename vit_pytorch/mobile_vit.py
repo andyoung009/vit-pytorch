@@ -145,6 +145,7 @@ class MV2Block(nn.Module):
             out = out + x
         return out
 
+# 文章图1（b）中的MobileViT Block
 class MobileViTBlock(nn.Module):
     def __init__(self, dim, depth, channel, kernel_size, patch_size, mlp_dim, dropout=0.):
         super().__init__()
@@ -211,8 +212,11 @@ class MobileViT(nn.Module):
         self.stem = nn.ModuleList([])
         self.stem.append(MV2Block(channels[0], channels[1], 1, expansion))
         self.stem.append(MV2Block(channels[1], channels[2], 2, expansion))
+        # 下面的MV2Block重复出现了2次，可以结合文章网络架构图
         self.stem.append(MV2Block(channels[2], channels[3], 1, expansion))
         self.stem.append(MV2Block(channels[2], channels[3], 1, expansion))
+
+      
 
         self.trunk = nn.ModuleList([])
         self.trunk.append(nn.ModuleList([

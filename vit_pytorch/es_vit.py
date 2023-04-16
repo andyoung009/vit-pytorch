@@ -1,3 +1,4 @@
+# 与dino.py中很多内容一样的
 import copy
 import random
 from functools import wraps, partial
@@ -17,6 +18,7 @@ def exists(val):
 def default(val, default):
     return val if exists(val) else default
 
+# 与dino.py中的部分函数一模一样
 def singleton(cache_key):
     def inner_fn(fn):
         @wraps(fn)
@@ -72,9 +74,18 @@ def region_loss_fn(
     student_probs = (student_logits / student_temp).softmax(dim = -1)
     teacher_probs = ((teacher_logits - centers) / teacher_temp).softmax(dim = -1)
 
+    # 这是一个用于在对比学习（contrastive learning）中获取相似样本的代码片段。
+    # 该代码片段使用学生模型和教师模型的潜在特征向量（latent feature vectors）计算相似性矩阵并使用该矩阵获取最相似的样本的索引。
+    # 具体来说，该代码片段执行以下操作：
+
+    # 使用einsum()函数计算学生模型和教师模型的潜在特征向量之间的相似性矩阵。其中，b表示批量大小，i和j表示样本索引，d表示特征向量的维度。
     sim_matrix = einsum('b i d, b j d -> b i j', student_latent, teacher_latent)
+    # 使用max()函数获取每个样本在相似性矩阵中的最大值及其索引。其中，dim=-1表示在最后一个维度上执行操作，即在样本之间进行比较。
     sim_indices = sim_matrix.max(dim = -1).indices
+    # 使用repeat()函数将相似样本的索引重复teacher_probs.shape[-1]次，以便在教师模型的概率分布上执行索引操作。
     sim_indices = repeat(sim_indices, 'b n -> b n k', k = teacher_probs.shape[-1])
+    # 使用gather()函数获取教师模型中与相似样本索引相关的概率分布。其中，1表示在第二个维度上执行索引操作，即在类别之间进行比较。
+    # 最终，max_sim_teacher_probs是一个张量，其形状为(batch_size, num_samples, num_classes)，表示每个样本在教师模型中的概率分布
     max_sim_teacher_probs = teacher_probs.gather(1, sim_indices)
 
     return - (max_sim_teacher_probs * log(student_probs, eps)).sum(dim = -1).mean()
@@ -115,6 +126,7 @@ class L2Norm(nn.Module):
     def forward(self, x, eps = 1e-6):
         return F.normalize(x, dim = 1, eps = eps)
 
+# 多能感知机,利用多个线性层连接而成
 class MLP(nn.Module):
     def __init__(self, dim, dim_out, num_layers, hidden_size = 256):
         super().__init__()
@@ -204,18 +216,25 @@ class NetWrapper(nn.Module):
         assert hidden is not None, f'hidden layer {self.layer} never emitted an output'
         return hidden
 
+    # 代码定义了一个神经网络模块的forward方法，该方法接受一个张量 x 和一个布尔标志 return_projection 作为输入。   
     def forward(self, x, return_projection = True):
+        # 该方法首先将输入张量 x 传递给 get_embedding 方法，该方法返回一个张量 region_latents，表示输入的每个区域学习到的特征。
         region_latents = self.get_embedding(x)
+        # 接下来，该方法通过在空间维度上取 region_latents 的平均值来计算全局特征向量 global_latent。
         global_latent = reduce(region_latents, 'b c h w -> b c', 'mean')
-
+        
+        # 如果 return_projection 设置为 False，则该方法返回一个元组，其中包含全局特征向量 global_latent 和张量 region_latents。
         if not return_projection:
             return global_latent, region_latents
 
+        # 然后使用该全局特征向量计算两个投影矩阵(本质上是MLP多层感知机)：view_projector 和 region_projector。
         view_projector = self._get_view_projector(global_latent)
         region_projector = self._get_region_projector(region_latents)
 
+        # 否则，该方法将 region_latents 沿空间维度展平，并将投影矩阵应用于全局特征向量和展平后的区域特征张量。
         region_latents = rearrange(region_latents, 'b c h w -> b (h w) c')
 
+        # 然后，该方法返回一个元组，其中包含投影后的全局特征向量，投影后的区域特征张量和原始未投影的区域特征张量 region_latents
         return view_projector(global_latent), region_projector(region_latents), region_latents
 
 # main class
@@ -300,10 +319,16 @@ class EsViTTrainer(nn.Module):
         del self.teacher_encoder
         self.teacher_encoder = None
 
+# 以上代码定义了一个神经网络模块的 `update_moving_average` 方法。该方法用于更新模型参数的移动平均值。
     def update_moving_average(self):
+        # 方法首先检查 `teacher_encoder` 是否已被创建。如果没有被创建，会抛出一个断言错误。
         assert self.teacher_encoder is not None, 'target encoder has not been created yet'
+        # 接下来，该方法调用 `update_moving_average` 方法，将 `teacher_encoder` 和 `student_encoder` 传递给 `teacher_ema_updater` 进行移动平均更新。
         update_moving_average(self.teacher_ema_updater, self.teacher_encoder, self.student_encoder)
 
+        # 然后，该方法使用 `teacher_centering_ema_updater` 对 `teacher_view_centers` 和 `teacher_region_centers` 进行移动平均更新
+        # 并将更新后的值分别存储到 `teacher_view_centers` 和 `teacher_region_centers` 中。最后，该方法将更新后的 `teacher_view_centers` 和 `teacher_region_centers`
+        # 复制到 `last_teacher_view_centers` 和 `last_teacher_region_centers` 中，以备下一次更新时使用。
         new_teacher_view_centers = self.teacher_centering_ema_updater.update_average(self.teacher_view_centers, self.last_teacher_view_centers)
         self.teacher_view_centers.copy_(new_teacher_view_centers)
 
@@ -329,6 +354,7 @@ class EsViTTrainer(nn.Module):
         student_view_proj_one, student_region_proj_one, student_latent_one = self.student_encoder(local_image_one)
         student_view_proj_two, student_region_proj_two, student_latent_two = self.student_encoder(local_image_two)
 
+        # teacher上应用stop-gradient (sg)操作符，只通过student来传播梯度。教师参数使用学生参数的指数移动平均(ema)进行更新
         with torch.no_grad():
             teacher_encoder = self._get_teacher_encoder()
             teacher_view_proj_one, teacher_region_proj_one, teacher_latent_one = teacher_encoder(global_image_one)

@@ -177,11 +177,21 @@ class DSSA(nn.Module):
 
         # early return if there is only 1 window
 
+        # 当num_windows等于1时，代表整个图像只被分为一个窗口进行处理。在这种情况下，分块操作是多余的，代码会将原图像fmap作为一个整体送入全连接层进行处理，并返回处理后的结果。
         if num_windows == 1:
             fmap = rearrange(windowed_fmaps, '(b x y) h (w1 w2) d -> b (h d) (x w1) (y w2)', x = height // wsz, y = width // wsz, w1 = wsz, w2 = wsz)
             return self.to_out(fmap)
 
         # carry out the pointwise attention, the main novelty in the paper
+
+        # 当num_windows不等于1时，代表图像会被分为多个窗口进行处理。在这种情况下，窗口中的特征会被送入pointwise attention层进行处理
+        # 最后再将处理后的特征图拼接起来。这种分块方式可以减小输入图像的尺寸，从而减少计算量，同时还能提升特征的局部性和多尺度性。
+        # 对应图2图中右下部分的图
+
+        # 为什么命名为point-wise self attention？
+        # 在DNN中，point-wise是指对于两个张量的对应元素进行乘积运算，得到一个新的张量的操作。
+        # 通常用于卷积神经网络中，将卷积核与输入张量的每个通道进行逐元素相乘，然后将结果相加得到输出张量。
+        # 此处对于window_fmaps而言，window_tokens扮演了1*1卷积的角色，通过自注意力去实现相应重合度下的特征图window_fmaps加权
 
         window_tokens = rearrange(window_tokens, '(b x y) h d -> b h (x y) d', x = height // wsz, y = width // wsz)
         windowed_fmaps = rearrange(windowed_fmaps, '(b x y) h n d -> b h (x y) n d', x = height // wsz, y = width // wsz)

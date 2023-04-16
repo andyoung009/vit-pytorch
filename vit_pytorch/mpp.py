@@ -1,3 +1,4 @@
+# 表示学习相关论文，但是vit-pytorch中没有给出具体论文链接，只给了Masked Patch Prediction的代码和作者GitHub主页
 import math
 
 import torch
@@ -11,18 +12,23 @@ from einops import rearrange, repeat, reduce
 def exists(val):
     return val is not None
 
+# 按照张量t的前2个维度生成一个掩码，掩码生成的规则是从（0，1）的均匀分布与预设概率值prob的大小来判断，返回的掩码矩阵是二值化的bool型张量
 def prob_mask_like(t, prob):
     batch, seq_length, _ = t.shape
     return torch.zeros((batch, seq_length)).float().uniform_(0, 1) < prob
 
+# 此处的prob为掩码patches个数占总patches的比率
 def get_mask_subset_with_prob(patched_input, prob):
     batch, seq_len, _, device = *patched_input.shape, patched_input.device
     max_masked = math.ceil(prob * seq_len)
 
+    # 使用torch.rand函数在batch*seq_len的大小下生成随机数，使用topk函数找到随机数中最大的max_masked个数的索引值，返回结果中的sampled_indices属性是找到的索引。
     rand = torch.rand((batch, seq_len), device=device)
     _, sampled_indices = rand.topk(max_masked, dim=-1)
 
     new_mask = torch.zeros((batch, seq_len), device=device)
+    # 使用torch.zeros函数创建一个大小为batch*num_patches的全零矩阵，然后使用scatter_函数将masked_indices对应的位置的值设为1
+    # 生成一个bool类型的掩码矩阵，表示哪些patch被mask了。
     new_mask.scatter_(1, sampled_indices, 1)
     return new_mask.bool()
 
@@ -46,11 +52,18 @@ class MPPLoss(nn.Module):
         self.output_channel_bits = output_channel_bits
         self.max_pixel_val = max_pixel_val
 
+        # 转换维度
         self.mean = torch.tensor(mean).view(-1, 1, 1) if mean else None
         self.std = torch.tensor(std).view(-1, 1, 1) if std else None
 
     def forward(self, predicted_patches, target, mask):
         p, c, mpv, bits, device = self.patch_size, self.channels, self.max_pixel_val, self.output_channel_bits, target.device
+
+        # 这段代码是计算分桶的桶大小（bin size）的公式。其中，mpv是目标数据的最大值（most positive value），bits是将目标数据量化所使用的比特数（bits per channel）。具体解释如下：
+        # 分桶的目的是将一定范围内的连续数值划分为若干个离散的区间，每个区间就称为一个桶。对于目标数据，将其按照一定的规则（例如等间距或等频率等）划分成多个桶，有助于进行数据分析、特征提取等操作。
+        # mpv是目标数据中的最大值，根据其与最小值之间的范围可以确定数据的取值范围。
+        # bits是将目标数据量化所使用的比特数，也就是数据压缩的程度。比特数越少，所能表示的数值范围就越小。
+        # 该公式将mpv除以2的bits次方，得到了每个桶的大小（bin size）。因为每个桶的宽度相等，所以通过该公式可以动态计算出数据的分布情况并进行离散化处理。
         bin_size = mpv / (2 ** bits)
 
         # un-normalize input
@@ -61,9 +74,21 @@ class MPPLoss(nn.Module):
         target = target.clamp(max = mpv) # clamp just in case
         avg_target = reduce(target, 'b c (h p1) (w p2) -> b (h w) c', 'mean', p1 = p, p2 = p).contiguous()
 
+        # 这行代码的作用是在设备 device 上生成一个张量 channel_bins，其中包含了从 bin_size 开始、以 bin_size 为步长、直到 mpv 但不包括 mpv 的一系列数值。
+        # 具体来说，这个张量包含了 mpv / bin_size - 1 个数值。例如，如果 mpv=3，bits=8，那么 bin_size 的计算结果为 3 / 256 = 0.01171875，
+        # channel_bins 的计算结果为 tensor([0.0117, 0.0234, 0.0352, 0.0469, ..., 2.9258, 2.9375])。
         channel_bins = torch.arange(bin_size, mpv, bin_size, device = device)
+        # 这行代码的作用是将 avg_target 按照给定的 channel_bins 进行分桶，并返回每个值所属的桶的索引。具体来说，channel_bins 是一个一维的 Tensor，表示每个桶的右端点。
+        # 例如，如果 channel_bins = [0.5, 1.5, 2.5]，则表示将数值分为四个桶：(-inf, 0.5]、(0.5, 1.5]、(1.5, 2.5]、(2.5, +inf)；
+        # avg_target 是一个 Tensor，其形状为 (batch_size, num_channels, height, width)，其中 batch_size 表示批次大小，
+        # num_channels 表示通道数，height 和 width 分别表示图像的高和宽。avg_target 中的每个元素表示输入图像中的一个像素在各个通道上的均值；
+        # torch.bucketize 函数将 avg_target 按照 channel_bins 进行分桶，并返回每个值所属的桶的索引。返回的 discretized_target 是一个整数类型的 Tensor，其形状与 avg_target 相同，
+        # 表示每个像素在各个通道上所属的桶的索引。例如，如果某个像素在第 0 个通道上的均值为 1.2，而 channel_bins 为 [0.5, 1.5, 2.5]，则该像素在第 0 个通道上的索引为 1，表示它所属于 (0.5, 1.5] 这个桶。
         discretized_target = torch.bucketize(avg_target, channel_bins)
 
+        # 这段代码的功能是将每个通道的均值映射到指定的离散区间上，然后通过对应的二进制掩码将它们转换为整数标签。具体来说，它首先将均值张量avg_target与通道区间bin_size进行分桶操作，并将结果保存在名为discretized_target的张量中。
+        # 然后，它通过创建一个bin_mask张量，该张量是形状为(1, 1, c)的三维张量，其中c是通道数，bin_mask的每个元素都是2的bits次方的幂次方，bits是给定的输出通道位数。接下来，代码使用重组操作将bin_mask的形状更改为(1, 1, c)。
+        # 最后，它将离散化的目标标签与bin_mask张量相乘，并使用sum函数将结果加和在通道维度上，从而将每个通道的离散化标签转换为一个整数标签，并将其存储在target_label中。
         bin_mask = (2 ** bits) ** torch.arange(0, c, device = device).long()
         bin_mask = rearrange(bin_mask, 'c -> () () c')
 

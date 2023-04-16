@@ -11,6 +11,7 @@ def pair(t):
 
 # classes
 
+# 把fns函数列表中的输入结果相加，就是并联无疑了
 class Parallel(nn.Module):
     def __init__(self, *fns):
         super().__init__()
@@ -87,6 +88,7 @@ class Transformer(nn.Module):
             ]))
 
     def forward(self, x):
+        # 见论文第二页图
         for attns, ffs in self.layers:
             x = attns(x) + x
             x = ffs(x) + x

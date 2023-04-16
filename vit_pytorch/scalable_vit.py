@@ -111,7 +111,8 @@ class ScalableSelfAttention(nn.Module):
         q, k, v = map(lambda t: rearrange(t, 'b (h d) ... -> b h (...) d', h = heads), (q, k, v))
 
         # similarity
-
+        # 此处q、k的特征图尺寸可能是不一样的，但是因为做了上一步d维度的分离，所以下一步内积是可以完成的
+        # dots shape: (b h q_(...) k_(...)) (...)表示卷积后形成的特征图的尺寸大小
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
         # attention
@@ -120,7 +121,8 @@ class ScalableSelfAttention(nn.Module):
         attn = self.dropout(attn)
 
         # aggregate values
-
+        # 此处内积可以计算，因为k、v的卷积是一样的，形成的特征图大小规格一样，所以内积时不存在维度问题
+        #  out shape: (b h q_(...) d)
         out = torch.matmul(attn, v)
 
         # merge back heads
@@ -165,6 +167,7 @@ class InteractiveWindowedSelfAttention(nn.Module):
         q, k, v = self.to_q(x), self.to_k(x), self.to_v(x)
 
         # get output of LIM
+        # 把原来v的特征又进行了一次kernel=3卷积，相当于把不同的块之间进行了互动，补偿了局部注意力的缺失
 
         local_out = self.local_interactive_module(v)
 
@@ -275,6 +278,16 @@ class ScalableViT(nn.Module):
             window_size,
         ]
 
+        # partial 是 Python 中的一个内置函数，它允许我们“部分应用”一个函数，从而创建一个新的函数。
+        # 具体而言，它可以将一个函数和一个或多个参数合并成一个新的可调用对象（函数），并返回该对象。
+        # 在这里，partial 用于创建一个新的函数，它实际上是cast_tuple函数的一个变体。函数需要两个参数：val 和 length,val在hyperparams_per_stage列表中，length=num_stages。
+
+        # comments from the cursor
+        # The line of code you provided, hyperparams_per_stage = list(map(partial(cast_tuple, length = num_stages), hyperparams_per_stage)), is using the map
+        # function to apply the partial function to each element in the hyperparams_per_stage list. The partial function is being used to create a new function 
+        # that takes a tuple as input and returns a tuple with a specified length. The length argument is being set to num_stages, which is presumably a variable
+        #  defined elsewhere in the code. The resulting list of tuples is then assigned back to hyperparams_per_stage. In summary, this line of code is modifying
+        #   the hyperparams_per_stage list by ensuring that each tuple in the list has a length of num_stages.
         hyperparams_per_stage = list(map(partial(cast_tuple, length = num_stages), hyperparams_per_stage))
         assert all(tuple(map(lambda arr: len(arr) == num_stages, hyperparams_per_stage)))
 

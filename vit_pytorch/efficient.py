@@ -1,3 +1,5 @@
+# Paper:Nyströmformer: A Nyström-Based Algorithm for Approximating Self-Attention
+
 import torch
 from torch import nn
 from einops import rearrange, repeat

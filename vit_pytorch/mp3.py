@@ -17,7 +17,15 @@ def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
 # positional embedding
+# 相对位置编码：
+# 位置编码的设计是为了表示每个位置与其他位置之间的相对距离，这是因为注意力机制的引入使得每个位置可以关注到其他位置的信息，而相对位置编码可以更好地捕捉到这种关注机制。
 
+# 这段代码实现了一个二维位置编码函数 posemb_sincos_2d，用于为输入的二维图像块 patches 中的每个位置生成相应的位置编码。
+# 该函数使用了正弦余弦函数（sine-cosine functions）来编码每个位置的横纵坐标。
+# 在函数中，首先从输入图像块 patches 中获取了其形状信息，并通过 meshgrid 函数生成了网格状的二维坐标点 (y, x)，其中 y 和 x 分别表示每个像素点在纵向和横向的位置。
+# 然后，函数将输出特征维度 dim 分成四份，对于每一份都生成了一个对应的频率系数向量 omega，用于后面的正弦余弦函数计算。
+# 对于每个坐标点 (y, x)，函数将其乘以频率系数 omega，然后分别计算正弦和余弦函数值，最后将它们拼接在一起，得到该位置的位置编码。
+# 最终返回的位置编码张量的形状为 (hw, 4 * dim/4)，其中 hw 表示输入图像块的像素数
 def posemb_sincos_2d(patches, temperature = 10000, dtype = torch.float32):
     _, h, w, dim, device, dtype = *patches.shape, patches.device, patches.dtype
 
@@ -79,6 +87,7 @@ class Attention(nn.Module):
         qkv = (self.to_q(x), *self.to_kv(context).chunk(2, dim = -1))
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), qkv)
 
+        # q和kv的输入不一样，导致其个数n存在差别，经过重新排列，其实就是第三个维度不一样
         dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
 
         attn = self.attend(dots)
@@ -169,6 +178,7 @@ class MP3(nn.Module):
         batch, num_patches, *_ = tokens.shape
 
         # Masking
+        # 与mpp等论文中的方法一样
         num_masked = int(self.masking_ratio * num_patches)
         rand_indices = torch.rand(batch, num_patches, device = device).argsort(dim = -1)
         masked_indices, unmasked_indices = rand_indices[:, :num_masked], rand_indices[:, num_masked:]

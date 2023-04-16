@@ -19,24 +19,48 @@ def pair(t):
 def log(t, eps = 1e-6):
     return torch.log(t + eps)
 
+# 文章提到要对atention score进行求和形成一个概率分布，如果简单处理会因为分段函数出现不可导的情形，以此此处采用Gumbel分布确保概率分布可微可反向传播
+# 这段代码实现了对 Gumbel 分布进行采样的功能，具体的作用解读如下：
+# shape 参数表示采样出来的 Gumbel 分布张量的形状大小；
+# device 参数表示采样出来的 Gumbel 分布张量的计算设备；
+# dtype 参数表示采样出来的 Gumbel 分布张量的数据类型；
+# eps 参数表示一个极小值，避免了分母为 0 的情况。
+# 具体地，代码中首先利用 torch.empty 创建了一个形状为 shape 的未初始化张量 u，并在范围 [0, 1) 内进行了随机初始化；然后利用 Gumbel 分布的公式 Gumbel(x;μ,β)=−ln(−ln(u))
+#  生成 Gumbel 分布采样结果，其中μ和β别为分布的位置和尺度参数，这里默认值为 0 和 1。
+# 最终返回生成的 Gumbel 分布采样结果张量。Gumbel(x;μ,β)=−ln(−ln(u))生成 Gumbel 分布采样结果
+
+# 顺便提一下文章DynamicViT文章也用到了这个方法，而ats把其一直作为了对比基线
+
+# 参考https://zhuanlan.zhihu.com/p/166632315 辅助理解
+
+# 此函数作用是定义sample_gumbel() 函数产生 Gumbel 噪声，即采样出服从Gumbel分布的噪声向量，形状与shape相同，用于离散空间采样向连续空间的映射
 def sample_gumbel(shape, device, dtype, eps = 1e-6):
     u = torch.empty(shape, device = device, dtype = dtype).uniform_(0, 1)
     return -log(-log(u, eps), eps)
 
+# 该函数功能实现具体的细节没有理解！！
 def batched_index_select(values, indices, dim = 1):
+    # 获取values第2个维度之后的形状规格
     value_dims = values.shape[(dim + 1):]
     values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
+    # 这两行代码的作用是将indices的维度与values的维度对齐，使得在后续的操作中可以使用broadcasting。
     indices = indices[(..., *((None,) * len(value_dims)))]
     indices = indices.expand(*((-1,) * len(indices_shape)), *value_dims)
+
+    # 在Python中，slice(None)等价于:，表示选取该维度上的所有元素。
+    # 例如，对于一个二维数组x，x[:, 1]可以写成x[slice(None), 1]。
     value_expand_len = len(indices_shape) - (dim + 1)
     values = values[(*((slice(None),) * dim), *((None,) * value_expand_len), ...)]
 
     value_expand_shape = [-1] * len(values.shape)
+    # 这行代码创建了一个 slice 对象，其起始位置是 1，结束位置是 dim + value_expand_len，步长默认为 1。
+    # 这个 slice 对象可以用于索引操作，例如对列表、元组、数组等进行切片操作。在这个例子中，对于一个可切片的对象，这个 slice 对象可以截取索引为 1 到 5 的元素。
     expand_slice = slice(dim, (dim + value_expand_len))
     value_expand_shape[expand_slice] = indices.shape[expand_slice]
     values = values.expand(*value_expand_shape)
 
     dim += value_expand_len
+    # 通过gather()函数来进行索引选择，其返回的结果张量形状为索引张量的形状与输入张量在指定维度上的形状拼接后的形状。
     return values.gather(dim, indices)
 
 class AdaptiveTokenSampling(nn.Module):
@@ -71,7 +95,16 @@ class AdaptiveTokenSampling(nn.Module):
         # mask out pseudo logits for gumbel-max sampling
 
         mask_without_cls = mask[:, 1:]
+        # 这段代码定义了一个 mask_value 变量，用于在实现 self-attention 时对于 padding 位置的 token 进行 mask。
+        # 具体来说，这里用到了 PyTorch 库中的 torch.finfo() 函数，用于返回浮点类型的数据类型的信息，包括它们的范围和精度等信息。
+        # 这里调用 torch.finfo(attn.dtype) 返回 attn tensor 的数据类型的信息，再通过 .max 得到该数据类型的最大值。
+        # 为了避免计算 softmax 时出现数值上的不稳定性，这里将 mask_value 初始化为该数据类型的最大值的一半（即将其除以 2），
+        # 在实现 mask 操作时，将 padding 位置的 token 对应的位置的值设为该 mask_value，再将其输入 softmax 中，softmax 操作将会将该位置的概率值约束在很小的范围内。
         mask_value = -torch.finfo(attn.dtype).max / 2
+        # 使用masked_fill函数将pseudo_logits张量中不需要的位置（即~mask_without_cls为True的位置）填充为指定的值mask_value。
+        # 其中，mask_without_cls是一个布尔型张量，表示pseudo_logits中除了CLS位置之外的其他位置。
+        # ~ 表示按位取反（bitwise NOT）运算符，对于二进制数中的每个位都进行翻转（0变为1，1变为0）
+        # 为什么取反~？
         pseudo_logits = pseudo_logits.masked_fill(~mask_without_cls, mask_value)
 
         # expand k times, k being the adaptive sampling number
@@ -85,7 +118,9 @@ class AdaptiveTokenSampling(nn.Module):
 
         # calculate unique using torch.unique and then pad the sequence from the right
 
+        # 那么可以使用 torch.unique() 获取该 sampled_token_ids 中的唯一值，即采样过一次就不用重复列出了：
         unique_sampled_token_ids_list = [torch.unique(t, sorted = True) for t in torch.unbind(sampled_token_ids)]
+        # 将输入的张量序列上进行填充，使得每个序列的长度相等，第一个维度是batch，也就是unique_sampled_token_ids_list的个数
         unique_sampled_token_ids = pad_sequence(unique_sampled_token_ids_list, batch_first = True)
 
         # calculate the new mask, based on the padding
@@ -159,6 +194,11 @@ class Attention(nn.Module):
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
+        # 使用了张量 dots 的 masked_fill 方法，将 dots_mask 中对应为 False 的位置的值替换为 mask_value。
+        # ~ 运算符是按位取反运算符，这里用于反转 dots_mask 中的布尔值。因此，masked_fill 方法将 dots_mask 中为 True 的位置的值替换为原始值
+        # 将 dots_mask 中为 False 的位置的值替换为 mask_value
+
+        # 为什么取反~，没有理解！！
         if exists(mask):
             dots_mask = rearrange(mask, 'b i -> b 1 i 1') * rearrange(mask, 'b j -> b 1 1 j')
             mask_value = -torch.finfo(dots.dtype).max
@@ -261,6 +301,7 @@ class ViT(nn.Module):
 
         if return_sampled_token_ids:
             # remove CLS token and decrement by 1 to make -1 the padding
+            # 因为0号token之前是cls token，现在需要除去
             token_ids = token_ids[:, 1:] - 1
             return logits, token_ids
 

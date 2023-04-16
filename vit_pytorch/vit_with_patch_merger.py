@@ -26,6 +26,7 @@ class PatchMerger(nn.Module):
 
     def forward(self, x):
         x = self.norm(x)
+        # 使用输入补丁作为键和值，并简单地学习一组固定的查询—每个输出补丁一个，原为第三页
         sim = torch.matmul(self.queries, x.transpose(-1, -2)) * self.scale
         attn = sim.softmax(dim = -1)
         return torch.matmul(attn, x)

@@ -44,6 +44,9 @@ class FeedForward(nn.Module):
 
 # MBConv
 
+# Squeeze-and-Excitation（简称SE）是一种用于卷积神经网络的通道注意力机制，通过自适应地学习通道权重，可以提高模型的性能。
+# 具体可以参考印象笔记第424条备注
+
 class SqueezeExcitation(nn.Module):
     def __init__(self, dim, shrinkage_rate = 0.25):
         super().__init__()
@@ -83,6 +86,15 @@ class Dropsample(nn.Module):
 
         if self.prob == 0. or (not self.training):
             return x
+
+        # 这段代码的作用是生成一个指定形状的张量keep_mask，用于控制输入x中的哪些特征图需要进行Squeeze-and-Excitation操作。
+        # 具体来说，keep_mask的形状为(x.shape[0], 1, 1, 1)，其中x.shape[0]表示输入的batch size，其他三个维度分别为1，用于匹配x的空间维度。
+        # 这里使用了torch.FloatTensor函数创建了一个新的浮点型张量，张量的元素值由以下的均匀分布产生：
+        # uniform_() > self.prob，其中self.prob是一个指定的概率值，表示在每个位置上保留输入特征图的概率。
+        # 这里使用了uniform_()函数产生一个在[0,1)之间均匀分布的随机张量，然后和self.prob做比较，生成一个二值张量，元素值为True或False。
+        # 最终得到的keep_mask张量中，True表示对应位置的特征图需要进行Squeeze-and-Excitation操作，False表示不需要进行操作。
+
+        #此处代码是否需要修改为keep_mask = torch.cuda.FloatTensor(torch.Size((x.shape[0], 1, 1, 1))).uniform_() > self.prob，否则keep_mask的形状变成了4，不是（b,1,1,1）
 
         keep_mask = torch.FloatTensor((x.shape[0], 1, 1, 1), device = device).uniform_() > self.prob
         return x * keep_mask / (1 - self.prob)
@@ -258,6 +270,10 @@ class MaxViT(nn.Module):
                         expansion_rate = mbconv_expansion_rate,
                         shrinkage_rate = mbconv_shrinkage_rate
                     ),
+
+                    # 此处的两种attention机制方法和“远近距离attention”的操作实际上是一模一样的！！
+                    # 具体见论文“CrossFormer: A Versatile Vision Transformer Hinging on Cross-scale Attention”
+                    
                     Rearrange('b d (x w1) (y w2) -> b x y w1 w2 d', w1 = w, w2 = w),  # block-like attention
                     PreNormResidual(layer_dim, Attention(dim = layer_dim, dim_head = dim_head, dropout = dropout, window_size = w)),
                     PreNormResidual(layer_dim, FeedForward(dim = layer_dim, dropout = dropout)),

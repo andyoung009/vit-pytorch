@@ -82,6 +82,7 @@ class Transformer(nn.Module):
             x = ff(x) + x
         return x
 
+# 该代码实际对应的是文章中Factorised Encoder的架构的代码，见文章中
 class ViT(nn.Module):
     def __init__(
         self,
@@ -125,12 +126,16 @@ class ViT(nn.Module):
             nn.LayerNorm(dim)
         )
 
+        # 创建一个可学习的位置嵌入矩阵（pos_embedding），用于将输入视频中的每个空间和时间片段映射到一个低维空间中。
         self.pos_embedding = nn.Parameter(torch.randn(1, num_frame_patches, num_image_patches, dim))
         self.dropout = nn.Dropout(emb_dropout)
 
+        # 创建一个空间和时间的分类标记（spatial_cls_token和temporal_cls_token），如果global_average_pool为True，则不创建分类标记。
         self.spatial_cls_token = nn.Parameter(torch.randn(1, 1, dim)) if not self.global_average_pool else None
         self.temporal_cls_token = nn.Parameter(torch.randn(1, 1, dim)) if not self.global_average_pool else None
 
+        # 创建一个空间变换器（spatial_transformer）和一个时间变换器（temporal_transformer），由Transformer模型组成的
+        # 对输入视频进行编码和解码，以提取有用的空间和时间信息。
         self.spatial_transformer = Transformer(dim, spatial_depth, heads, dim_head, mlp_dim, dropout)
         self.temporal_transformer = Transformer(dim, temporal_depth, heads, dim_head, mlp_dim, dropout)
 
@@ -157,6 +162,7 @@ class ViT(nn.Module):
         x = rearrange(x, 'b f n d -> (b f) n d')
 
         # attend across space
+        # 针对n的维度做文章
 
         x = self.spatial_transformer(x)
 
@@ -167,6 +173,7 @@ class ViT(nn.Module):
         x = x[:, :, 0] if not self.global_average_pool else reduce(x, 'b f n d -> b f d', 'mean')
 
         # append temporal CLS tokens
+        # 针对Frame维度做文章
 
         if exists(self.temporal_cls_token):
             temporal_cls_tokens = repeat(self.temporal_cls_token, '1 1 d-> b 1 d', b = b)

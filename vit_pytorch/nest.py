@@ -99,6 +99,9 @@ class Transformer(nn.Module):
     def forward(self, x):
         *_, h, w = x.shape
 
+        # 该位置嵌入选取的参数是根据输入的x的具体shape确定的，因为下面的数组的角标做了切片，一共选取了前（h*w）个参数
+        # 因此设计pos_emb时只需要保证在第一层时有足够的位置嵌入参数
+        # 后续则由于聚合函数的作用，block的数量一直降低，因此参数一定是够的！
         pos_emb = self.pos_emb[:(h * w)]
         pos_emb = rearrange(pos_emb, '(h w) -> () () h w', h = h, w = w)
         x = x + pos_emb
@@ -128,12 +131,20 @@ class NesT(nn.Module):
         assert (image_size % patch_size) == 0, 'Image dimensions must be divisible by the patch size.'
         num_patches = (image_size // patch_size) ** 2
         patch_dim = channels * patch_size ** 2
-        fmap_size = image_size // patch_size
-        blocks = 2 ** (num_hierarchies - 1)
+        fmap_size = image_size // patch_size        # 图像尺寸上有多少patch_size
+        # 论文图1中num_hierarchies=3
+        blocks = 2 ** (num_hierarchies - 1)     #   = 4（block在特征图维度上包含patch_size的个数）
 
+        # 特征图中包含多少个blocks呢？ 
         seq_len = (fmap_size // blocks) ** 2   # sequence length is held constant across hierarchy
-        hierarchies = list(reversed(range(num_hierarchies)))
-        mults = [2 ** i for i in reversed(hierarchies)]
+
+        # num_hierarchies 是金字塔中总共的层数，此处为3。
+        # hierarchies 是一个倒序排列的整数列表，表示金字塔中每一层的编号，例如 [3, 2, 1, 0] 表示第一层编号为 3，第二层编号为 2，以此类推。
+        # mults 是一个倒序排列的整数列表，表示每一层的空间尺度相对于最底层的空间尺度的比例因子，例如 [8, 4, 2, 1] 表示最底层的空间尺度是 8 像素，第二层是 4 像素，以此类推。
+        # layer_heads 是一个倒序排列的整数列表，表示每一层的头数（即注意力机制中的头数），例如 [32, 16, 8, 4] 表示最顶层的头数为 32，第二层是 16，以此类推。
+        # layer_dims 是一个倒序排列的整数列表，表示每一层的特征维度数，例如 [256, 128, 64, 32] 表示最顶层的特征维度数为 256，第二层是 128，以此类推。
+        hierarchies = list(reversed(range(num_hierarchies)))    # [2,1,0]
+        mults = [2 ** i for i in reversed(hierarchies)]         # [1,2,4]
 
         layer_heads = list(map(lambda t: t * heads, mults))
         layer_dims = list(map(lambda t: t * dim, mults))
@@ -177,6 +188,11 @@ class NesT(nn.Module):
 
         for level, (transformer, aggregate) in zip(reversed(range(num_hierarchies)), self.layers):
             block_size = 2 ** level
+            # 此处是不是维度信息有问题？是不是应该按照Line136中block的数量将输入的patch再进行尺寸上的划分呢？
+            # 现在第一循环block_size=1，则h和w表示的仍然是特征图在宽高方向上有多少个patches，而不是多少个blocks
+            # 那么必然导致在位置编码加法运算时出现问题！和line136冲突了！
+            # 应修改
+            # block_size = 2 ** (level + num_hierarchies - 1) 
             x = rearrange(x, 'b c (b1 h) (b2 w) -> (b b1 b2) c h w', b1 = block_size, b2 = block_size)
             x = transformer(x)
             x = rearrange(x, '(b b1 b2) c h w -> b c (b1 h) (b2 w)', b1 = block_size, b2 = block_size)

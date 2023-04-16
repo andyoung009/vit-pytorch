@@ -9,6 +9,7 @@ from einops.layers.torch import Rearrange
 def pair(t):
     return t if isinstance(t, tuple) else (t, t)
 
+# 以上代码定义了一个名为posemb_sincos_2d的函数，用于为输入的2D图像块序列生成位置嵌入。
 def posemb_sincos_2d(patches, temperature = 10000, dtype = torch.float32):
     _, h, w, dim, device, dtype = *patches.shape, patches.device, patches.dtype
 

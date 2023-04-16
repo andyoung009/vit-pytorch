@@ -116,6 +116,7 @@ class R2LTransformer(nn.Module):
 
         self.window_size = window_size
         rel_positions = 2 * window_size - 1
+        # Swin-Transformer的相对位置定义采用的是torch.Parameter()，但其实生成的相对位置参数表的规格是一样大小的，异曲同工
         self.local_rel_pos_bias = nn.Embedding(rel_positions ** 2, heads)
 
         for _ in range(depth):
@@ -125,7 +126,9 @@ class R2LTransformer(nn.Module):
             ]))
 
     def forward(self, local_tokens, region_tokens):
+        # 获取设备
         device = local_tokens.device
+        # 函数首先获取输入张量的维度信息，然后将local_tokens和region_tokens重排为二维张量，维度顺序为(batch_size, h*w, channels)，其中h和w是输入张量的高度和宽度
         lh, lw = local_tokens.shape[-2:]
         rh, rw = region_tokens.shape[-2:]
         window_size_h, window_size_w = lh // rh, lw // rw
@@ -134,6 +137,7 @@ class R2LTransformer(nn.Module):
         region_tokens = rearrange(region_tokens, 'b c h w -> b (h w) c')
 
         # calculate local relative positional bias
+        # 经过对比，发现此次的代码和Swin-Transformer的代码真的是一个思路！第一次看到Swin-transformer时不理解，现在明白了（欧几里得方法实现相对位置编码）
         
         h_range = torch.arange(window_size_h, device = device)
         w_range = torch.arange(window_size_w, device = device)
@@ -145,6 +149,7 @@ class R2LTransformer(nn.Module):
         bias_indices = (grid * torch.tensor([1, self.window_size * 2 - 1], device = device)[:, None, None]).sum(dim = 0)
         rel_pos_bias = self.local_rel_pos_bias(bias_indices)
         rel_pos_bias = rearrange(rel_pos_bias, 'i j h -> () h i j')
+        # 因为下文将local embedding和region embedding合并了(torch.cat())，因此需要补足相对位置偏置矩阵
         rel_pos_bias = F.pad(rel_pos_bias, (1, 0, 1, 0), value = 0)
 
         # go through r2l transformer layers
@@ -161,6 +166,7 @@ class R2LTransformer(nn.Module):
             # do self attention on local tokens, along with its regional token
 
             region_and_local_tokens = torch.cat((region_tokens, local_tokens), dim = 1)
+            # 拼接后不影响具体注意力的计算，因为attention计算过程中n的维度始终没有参与Linear()的运算，见attention类定义
             region_and_local_tokens = attn(region_and_local_tokens, rel_pos_bias = rel_pos_bias) + region_and_local_tokens
 
             # feedforward
@@ -258,6 +264,8 @@ class RegionViT(nn.Module):
         assert divisible_by(h, self.region_patch_size) and divisible_by(w, self.region_patch_size), 'height and width must be divisible by region patch size'
         assert divisible_by(h, self.local_patch_size) and divisible_by(w, self.local_patch_size), 'height and width must be divisible by local patch size'
 
+        # 相对于local_tokens，region_tokens的特征量级小很多，按照输入img=(b, 3, 224, 224)计算，在R2LTransformer类前向函数中tokens的处理工程中
+        # local_tokens，region_tokens的embedddings在个数维度比为49：1(b*8*8,7*7,dim):(b*8*8,1,dim)，实际上全局特征大大弱化了,具体参考R2LTransformer类前向函数
         local_tokens = self.local_encoder(x)
         region_tokens = self.region_encoder(x)
 
@@ -265,5 +273,6 @@ class RegionViT(nn.Module):
             local_tokens, region_tokens = down(local_tokens), down(region_tokens)
             local_tokens = peg(local_tokens)
             local_tokens, region_tokens = transformer(local_tokens, region_tokens)
-
+        
+        # 此处直接返回region_tokens的平均池化，感觉结合region_tokens运算时的维度信息（相对于local_tokens为1维度），它似乎起到了cls_token的分类作用
         return self.to_logits(region_tokens)

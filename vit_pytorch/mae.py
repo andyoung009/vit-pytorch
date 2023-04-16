@@ -1,3 +1,6 @@
+# 表示学习相关论文
+# the paper is ‘He K, Chen X, Xie S, et al. Masked autoencoders are scalable vision learners[C]’
+# //Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2022: 16000-16009.
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -38,6 +41,7 @@ class MAE(nn.Module):
         self.decoder_pos_emb = nn.Embedding(num_patches, decoder_dim)
         self.to_pixels = nn.Linear(decoder_dim, pixel_values_per_patch)
 
+# 该架构前向函数参考文章中图1的网络架构图
     def forward(self, img):
         device = img.device
 
@@ -53,8 +57,17 @@ class MAE(nn.Module):
 
         # calculate of patches needed to be masked, and get random indices, dividing it up for mask vs unmasked
 
+        # 此处和论文simmim的实现部分高度相似
+        # torch.where()是PyTorch中的一个函数，用于根据给定的条件在两个张量之间进行选择元素。
+        # torch.where(condition, x, y)
+        # 其中，condition是一个布尔类型的张量，x和y是两个具有相同形状的张量。该函数返回一个新张量，其形状与x和y相同。
+        # 对于每个元素，如果condition中的元素为True，则将x中的对应元素选择过来，否则将y中的对应元素选择过来。
+
+        # 将masking_ratio乘以num_patches得到要被mask的patch数量，使用int函数将结果取整并赋值给num_masked。
         num_masked = int(self.masking_ratio * num_patches)
+        # 使用torch.rand函数在batch*num_patches的大小下生成随机数，使用argsort函数升序排列该张量。
         rand_indices = torch.rand(batch, num_patches, device = device).argsort(dim = -1)
+        # 按照降序的索引来选取遮盖部分的索引和暴露部分的索引
         masked_indices, unmasked_indices = rand_indices[:, :num_masked], rand_indices[:, num_masked:]
 
         # get the unmasked tokens to be encoded

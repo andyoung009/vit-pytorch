@@ -15,6 +15,15 @@ def pair(t):
 
 # controlling freezing of layers
 
+# from cursor
+# The code block provided defines three functions: set_module_requires_grad_, freeze_all_layers_, and unfreeze_all_layers_.
+# set_module_requires_grad_ takes in a module and a boolean value requires_grad, and sets the requires_grad attribute of all parameters in the module to the given value.
+# freeze_all_layers_ takes in a module and freezes all layers in the module by calling set_module_requires_grad_ with requires_grad=False.
+# unfreeze_all_layers_ takes in a module and unfreezes all layers in the module by calling set_module_requires_grad_ with requires_grad=True.
+# These functions are likely used for controlling the freezing of layers during training of a neural network.
+# requires_grad is a boolean parameter, not a boolean tensor. In the set_module_requires_grad_ function, the requires_grad parameter is used to set 
+# the requires_grad attribute of all parameters in the module to the given value. This means that the requires_grad parameter is applied to all parameters 
+# in the module, and not just a single tensor.
 def set_module_requires_grad_(module, requires_grad):
     for param in module.parameters():
         param.requires_grad = requires_grad
@@ -77,6 +86,8 @@ class Attention(nn.Module):
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
         if exists(attn_mask):
+            # here mask = True means attent, so need to '~' the attn_mask to mask the None-attent patches 
+            # see the code in line:204-207
             dots = dots.masked_fill(~attn_mask, -torch.finfo(dots.dtype).max)
 
         attn = self.attend(dots)
@@ -191,7 +202,7 @@ class Adapter(nn.Module):
         # it allows the memory CLS token to attend to all other tokens (and the learnable memory layer tokens), but not vice versa        
 
         attn_mask = torch.ones((num_patches, num_patches), dtype = torch.bool)
-        attn_mask = F.pad(attn_mask, (1, num_memories_per_layer), value = False)  # main tokens cannot attend to learnable memories per layer
+        attn_mask = F.pad(attn_mask, (1, num_memories_per_layer), value = False)  # main tokens cannot attend to learnable memories per layer, here True means attent, False means no attent
         attn_mask = F.pad(attn_mask, (0, 0, 1, 0), value = True)                  # memory CLS token can attend to everything
         self.register_buffer('attn_mask', attn_mask)
 

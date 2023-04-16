@@ -24,15 +24,20 @@ class CrossEmbedLayer(nn.Module):
         num_scales = len(kernel_sizes)
 
         # calculate the dimension at each scale
+        # 这个计算方法是将总输出通道数平均分配给不同的尺度，最后一个尺度分配剩下的通道数（第一个占总通道1半，以此递减，最后把剩余的分给最后一个）
         dim_scales = [int(dim_out / (2 ** i)) for i in range(1, num_scales)]
         dim_scales = [*dim_scales, dim_out - sum(dim_scales)]
 
         self.convs = nn.ModuleList([])
         for kernel, dim_scale in zip(kernel_sizes, dim_scales):
+            # padding的自适应填充使得对于不同尺寸卷积核的输出特征图规格都是一样的(H//s, W//s)
             self.convs.append(nn.Conv2d(dim_in, dim_scale, kernel, stride = stride, padding = (kernel - stride) // 2))
 
     def forward(self, x):
+        # 在 forward 函数中，将输入张量 x 分别经过 convs 列表中的每个卷积层得到不同尺度的特征图，并将这些特征图在通道维度上拼接起来，最后返回拼接后的特征图。
+        # 使用了lambda匿名函数获取不同规格的卷积层用map()做输入x的输出映射
         fmaps = tuple(map(lambda conv: conv(x), self.convs))
+        # (b, dim_out, H//s, W//s)输出特征shape
         return torch.cat(fmaps, dim = 1)
 
 # dynamic positional bias
@@ -117,6 +122,7 @@ class Attention(nn.Module):
         self.register_buffer('rel_pos_indices', rel_pos_indices, persistent = False)
 
     def forward(self, x):
+        # 此处的x.shape赋值*_, height, width时倒着来的，因为前面的*_可以容纳一个列表，其中元素个数时由剩余的维度信息决定的，测试也证明如此
         *_, height, width, heads, wsz, device = *x.shape, self.heads, self.window_size, x.device
 
         # prenorm
@@ -124,7 +130,7 @@ class Attention(nn.Module):
         x = self.norm(x)
 
         # rearrange for short or long distance attention
-
+        # 远近注意力机制的区别尽然只在rearrange分割后的排序上做了手脚，长度和宽度维度的wsz前后位置的颠倒直接导致了分割结果的不一样，具体区别如论文图Figure 3
         if self.attn_type == 'short':
             x = rearrange(x, 'b d (h s1) (w s2) -> (b h w) d s1 s2', s1 = wsz, s2 = wsz)
         elif self.attn_type == 'long':
@@ -142,7 +148,10 @@ class Attention(nn.Module):
         sim = einsum('b h i d, b h j d -> b h i j', q, k)
 
         # add dynamic positional bias
-
+        # 此段代码和Swin-Transformer等论文中用到的位置计算方法很相似，基本就是(regionvit)embedding或者(Swin_transformer)nn.Parameter()或Conv()或Linear()生产一个参数表
+        # 然后利用索引去查表获取相对位置值，（欧几里得方法）
+        # 此处的代码稍有问题，应该是pos = torch.arange(1-wsz, wsz, device = device)吧？
+        # 参考原文中代码（https://github.com/cheerss/CrossFormer/blob/main/models/crossformer.py）处发现此处和DPG()函数函数有区别的,此处的相对位置表格范围扩大化了
         pos = torch.arange(-wsz, wsz + 1, device = device)
         rel_pos = torch.stack(torch.meshgrid(pos, pos, indexing = 'ij'))
         rel_pos = rearrange(rel_pos, 'c i j -> (i j) c')
@@ -237,7 +246,7 @@ class CrossFormer(nn.Module):
         assert len(cross_embed_strides) == 4
 
         # dimensions
-
+        # 组合出每个层的输入与输出channels的组合（从dim的第一个元素到倒数第二个元素与dim的倒数n-1个元素两两组合形成元组对）
         last_dim = dim[-1]
         dims = [channels, *dim]
         dim_in_and_out = tuple(zip(dims[:-1], dims[1:]))
